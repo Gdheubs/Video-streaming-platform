@@ -1,0 +1,14 @@
+{
+  "name": "premium-streaming-platform",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "install-all": "concurrently \"cd server && npm install\" \"cd client && npm install\"",
+    "server": "cd server && npm run dev",
+    "client": "cd client && npm run dev",
+    "start": "concurrently \"npm run server\" \"npm run client\""
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.0"
+  }
+}
