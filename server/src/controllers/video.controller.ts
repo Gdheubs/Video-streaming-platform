@@ -1,68 +1,80 @@
-import { Request, Response } from 'express';
-import { PrismaClient } from '@prisma/client';
-import { generateSignedCookies } from '../services/cloudfront.service';
-import ffmpeg from 'fluent-ffmpeg';
-import fs from 'fs';
+import { Request, Response } from "express";
+import prisma from "../lib/prisma";
+import { s3 } from "../lib/s3";
 
-const prisma = new PrismaClient();
+// Chunk size for streaming (1MB)
+const STREAM_CHUNK_SIZE = 10 ** 6;
 
-// 1. Upload & Transcode (Simplistic Local Version)
-export const uploadVideo = async (req: Request, res: Response) => {
-  if (!req.file) return res.status(400).send("No file");
-  if (!req.user?.id) return res.status(401).json({ error: "Unauthorized" });
-  
-  // Create DB Entry
-  const video = await prisma.video.create({
-    data: {
-      title: req.body.title || "Untitled",
-      url: "", 
-      creatorId: req.user.id
-    }
-  });
-
-  // Start FFmpeg HLS Transcoding (Background)
-  const outputDir = `public/videos/${video.id}`;
-  if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, { recursive: true });
-
-  ffmpeg(req.file.path)
-    .outputOptions([
-      '-profile:v baseline',
-      '-level 3.0',
-      '-hls_time 10',
-      '-hls_list_size 0',
-      '-f hls'
-    ])
-    .output(`${outputDir}/index.m3u8`)
-    .on('end', async () => {
-      await prisma.video.update({
-        where: { id: video.id },
-        data: { 
-          status: 'READY',
-          url: `/videos/${video.id}/index.m3u8` // In prod, this is the S3 key
-        }
-      });
-    })
-    .run();
-
-  res.json({ message: "Processing started", videoId: video.id });
-};
-
-// 2. Stream Securely (Generate Cookies)
 export const streamVideo = async (req: Request, res: Response) => {
-  const videoId = req.params.id;
-  const video = await prisma.video.findUnique({ where: { id: videoId } });
-  
-  if (!video) return res.status(404).json({ error: "Not Found" });
+  try {
+    const { id } = req.params;
 
-  // Generate Cookies for CloudFront
-  const cookies = generateSignedCookies(`videos/${videoId}/*`);
+    const video = await prisma.video.findUnique({
+      where: { id },
+    });
 
-  if (cookies) {
-    const opts = { httpOnly: true, secure: true, sameSite: 'none' as const };
-    res.cookie('CloudFront-Policy', cookies['CloudFront-Policy'], opts);
-    res.cookie('CloudFront-Signature', cookies['CloudFront-Signature'], opts);
-    res.cookie('CloudFront-Key-Pair-Id', cookies['CloudFront-Key-Pair-Id'], opts);
+    if (!video) {
+      return res.status(404).json({ message: "Video not found" });
+    }
+
+    // Use s3Key field or fallback to s3KeyOriginal for compatibility
+    const s3Key = video.s3Key || video.s3KeyOriginal;
+
+    if (!s3Key) {
+      return res.status(404).json({ message: "Video file not found" });
+    }
+
+    const params = {
+      Bucket: process.env.AWS_BUCKET!,
+      Key: s3Key,
+    };
+
+    const head = await s3.headObject(params).promise();
+    const fileSize = head.ContentLength!;
+
+    const range = req.headers.range;
+
+    // Support both ranged and non-ranged requests
+    if (!range) {
+      // Non-ranged request - return full file info for metadata
+      const stream = s3.getObject(params).createReadStream();
+      res.writeHead(200, {
+        "Content-Length": fileSize,
+        "Content-Type": "video/mp4",
+        "Accept-Ranges": "bytes",
+      });
+      return stream.pipe(res);
+    }
+
+    // Parse Range header properly (e.g., "bytes=0-1023" or "bytes=0-")
+    const rangeMatch = range.match(/bytes=(\d+)-(\d*)/);
+    if (!rangeMatch) {
+      return res.status(416).send("Invalid Range header");
+    }
+
+    const start = parseInt(rangeMatch[1], 10);
+    const requestedEnd = rangeMatch[2] ? parseInt(rangeMatch[2], 10) : undefined;
+    const end = requestedEnd !== undefined 
+      ? Math.min(requestedEnd, fileSize - 1) 
+      : Math.min(start + STREAM_CHUNK_SIZE, fileSize - 1);
+
+    const stream = s3
+      .getObject({
+        ...params,
+        Range: `bytes=${start}-${end}`,
+      })
+      .createReadStream();
+
+    res.writeHead(206, {
+      "Content-Range": `bytes ${start}-${end}/${fileSize}`,
+      "Accept-Ranges": "bytes",
+      "Content-Length": end - start + 1,
+      "Content-Type": "video/mp4",
+    });
+
+    stream.pipe(res);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Video streaming failed" });
   }
-
-  res.json({ url: `${process.env.CLOUDFRONT_DOMAIN}/${video.url}` });
 };
