@@ -5,14 +5,22 @@ interface Props {
 }
 
 const VideoPlayer = ({ videoId }: Props) => {
-  const apiUrl = process.env.NEXT_PUBLIC_API_URL?.replace('/api', '') || 'http://localhost:5000';
+  // Construct the streaming URL based on the API URL
+  const getStreamUrl = () => {
+    const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api';
+    // Remove /api suffix if present to get base server URL for /videos route
+    const serverUrl = baseUrl.endsWith('/api') 
+      ? baseUrl.slice(0, -4) 
+      : baseUrl;
+    return `${serverUrl}/videos/stream/${videoId}`;
+  };
   
   return (
     <video
       controls
       preload="metadata"
       style={{ width: "100%", maxHeight: "80vh" }}
-      src={`${apiUrl}/videos/stream/${videoId}`}
+      src={getStreamUrl()}
     />
   );
 };

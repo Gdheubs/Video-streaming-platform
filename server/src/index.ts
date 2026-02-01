@@ -22,18 +22,21 @@ dotenv.config();
 
 const app = express();
 
-/* ENV VALIDATION */
-[
+/* ENV VALIDATION - Fail fast if required variables are missing */
+const requiredEnvVars = [
   "DATABASE_URL",
   "AWS_ACCESS_KEY_ID",
   "AWS_SECRET_ACCESS_KEY",
   "AWS_REGION",
   "AWS_BUCKET",
-].forEach((k) => {
-  if (!process.env[k]) {
-    console.warn(`⚠️ Missing env variable: ${k}`);
-  }
-});
+];
+
+const missingVars = requiredEnvVars.filter((k) => !process.env[k]);
+if (missingVars.length > 0) {
+  console.error(`❌ Missing required environment variables: ${missingVars.join(", ")}`);
+  console.error("Please configure these variables in your .env file");
+  process.exit(1);
+}
 
 // Security middleware (before body parser for webhooks)
 app.use(helmet());

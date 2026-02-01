@@ -2,6 +2,9 @@ import { Request, Response } from "express";
 import prisma from "../lib/prisma";
 import { s3 } from "../lib/s3";
 
+// Chunk size for streaming (1MB)
+const STREAM_CHUNK_SIZE = 10 ** 6;
+
 export const streamVideo = async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
@@ -15,15 +18,10 @@ export const streamVideo = async (req: Request, res: Response) => {
     }
 
     // Use s3Key field or fallback to s3KeyOriginal for compatibility
-    const s3Key = (video as any).s3Key || video.s3KeyOriginal;
+    const s3Key = video.s3Key || video.s3KeyOriginal;
 
     if (!s3Key) {
       return res.status(404).json({ message: "Video file not found" });
-    }
-
-    const range = req.headers.range;
-    if (!range) {
-      return res.status(416).send("Range header required");
     }
 
     const params = {
@@ -33,10 +31,32 @@ export const streamVideo = async (req: Request, res: Response) => {
 
     const head = await s3.headObject(params).promise();
     const fileSize = head.ContentLength!;
-    const chunkSize = 10 ** 6;
 
-    const start = Number(range.replace(/\D/g, ""));
-    const end = Math.min(start + chunkSize, fileSize - 1);
+    const range = req.headers.range;
+
+    // Support both ranged and non-ranged requests
+    if (!range) {
+      // Non-ranged request - return full file info for metadata
+      const stream = s3.getObject(params).createReadStream();
+      res.writeHead(200, {
+        "Content-Length": fileSize,
+        "Content-Type": "video/mp4",
+        "Accept-Ranges": "bytes",
+      });
+      return stream.pipe(res);
+    }
+
+    // Parse Range header properly (e.g., "bytes=0-1023" or "bytes=0-")
+    const rangeMatch = range.match(/bytes=(\d+)-(\d*)/);
+    if (!rangeMatch) {
+      return res.status(416).send("Invalid Range header");
+    }
+
+    const start = parseInt(rangeMatch[1], 10);
+    const requestedEnd = rangeMatch[2] ? parseInt(rangeMatch[2], 10) : undefined;
+    const end = requestedEnd !== undefined 
+      ? Math.min(requestedEnd, fileSize - 1) 
+      : Math.min(start + STREAM_CHUNK_SIZE, fileSize - 1);
 
     const stream = s3
       .getObject({
