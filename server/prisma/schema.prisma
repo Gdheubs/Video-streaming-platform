@@ -92,6 +92,7 @@ model Video {
   id                String            @id @default(uuid())
   title             String
   description       String?
+  s3Key             String?           // Simple S3 key for direct streaming
   s3KeyOriginal     String?           // Path to original upload
   s3KeyHLS          String?           // Path to HLS manifest
   hlsManifestUrl    String?           // Public CDN URL for .m3u8

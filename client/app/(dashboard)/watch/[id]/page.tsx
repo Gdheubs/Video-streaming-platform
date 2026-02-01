@@ -2,7 +2,8 @@
 import { useQuery } from '@tanstack/react-query';
 import { useParams } from 'next/navigation';
 import { api } from '@/lib/api';
-import { Play, ThumbsUp, Share2, MessageSquare } from 'lucide-react';
+import { ThumbsUp, Share2, MessageSquare } from 'lucide-react';
+import VideoPlayer from '@/components/video/VideoPlayer';
 
 export default function WatchPage() {
   const params = useParams();
@@ -34,14 +35,9 @@ export default function WatchPage() {
 
   return (
     <div className="max-w-7xl mx-auto space-y-6">
-      {/* Video Player */}
+      {/* Video Player - Use S3 streaming */}
       <div className="bg-black aspect-video rounded-xl overflow-hidden">
-        <video
-          controls
-          className="w-full h-full"
-          src={video.hlsUrl || video.originalUrl}
-          poster={video.thumbnailUrl}
-        />
+        <VideoPlayer videoId={videoId} />
       </div>
 
       {/* Video Info */}

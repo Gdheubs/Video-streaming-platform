@@ -4,3 +4,4 @@ dist/
 .next/
 uploads/
 private_key.pem
+*.tsbuildinfo
